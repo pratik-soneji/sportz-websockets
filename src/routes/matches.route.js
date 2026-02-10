@@ -29,7 +29,7 @@ matchesRouter.post('/',async(req,res)=>{
     if (!parsed.success) {
         res.status(404).json({ error : 'Invalid payload', details : parsed.error.issues })
     }
-    const { data : { startTime, endTime, homeScore, awayScore } } = parsed
+    const { data : { startTime, endTime, homeScore , awayScore } } = parsed
     try {
         const [event] = await db.insert(matches).values({
             ...parsed.data,
