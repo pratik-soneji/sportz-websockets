@@ -54,6 +54,18 @@ export const attachWebSocketServer = (server) => {
         });
     });
     wss.on('connection', async (socket, req) => {
+        if (wsArcjet) {
+            try {
+                const decision =  await wsArcjet.protect(req)
+                if (decision.isDenied()) {
+                    const code = decision.reason.isRateLimit() ? 1013 : 1008;
+                    const reason= decision.reason.isRateLimit() ? 'Rate Limit exceeded' : 'Access Denied'
+                }
+            } catch (error) {
+                console.error('WS connection error', error);
+                socket.close(1011, 'Server Security Error')
+            }
+        }
         socket.isAlive = true;
         socket.on('pong', () => { socket.isAlive = true; });
 
