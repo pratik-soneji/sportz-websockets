@@ -41,8 +41,8 @@ export const securityMiddleWare = () => {
                 return res.status(403).json({ error: 'Forbidden.' });
             }
         } catch (e) {
-            console.log(`Arcjet middleware Err` + e);
-            return res.status(503).json({ error: e })
+            console.error('Arcjet middleware Err', e, e.stack);
+            return res.status(503).json({ error: 'Service unavailable' });
         }
         next();
     }
