@@ -2,22 +2,80 @@ import { WebSocketServer } from "ws";
 import { WebSocket } from "ws";
 import { wsArcjet } from "../arcjet.js";
 
+const matchSubscribers = new Map();
+
+const subscribe = (matchId, socket) => {
+    if (!matchSubscribers.has(matchId)) {
+        matchSubscribers.set(matchId, new Set())
+    }
+    matchSubscribers.get(matchId).add(socket)
+}
+
+const unsubscribe = (matchId, socket) => {
+    const subscribers = matchSubscribers.get(matchId)
+    if (!subscribers) {
+        return;
+    }
+    subscribers.delete(socket)
+    if (subscribers.size === 0) {
+        matchSubscribers.delete(matchId)
+    }
+}
+
+const cleanupSubscriptions = (socket) => {
+    for (const matchId of socket.subscriptions) {
+        unsubscribe(matchId, socket);
+    }
+}
 
 const sendJson = (socket, payload) => {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify(payload))
 }
+const broadCastToMatch = (matchId, payload) => {
+    const subscribers = matchSubscribers.get(matchId)
+    if (!subscribers || subscribers.size === 0) {
+        return;
+    }
+    const message = JSON.stringify(payload);
 
-const broadCast = (wss, payload) => {
-    
+    for (const client of subscribers) {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(message)
+        }
+    }
+}
+const broadCastToAll = (wss, payload) => {
+    const message = JSON.stringify(payload);
     for (const client of wss.clients) {
-        if (client.readyState !== WebSocket.OPEN) continue;    
-        client.send(JSON.stringify(payload))
+        if (client.readyState !== WebSocket.OPEN) continue;
+        client.send(message)
+    }
+}
+
+const handleMessage = (socket, data) => {
+    let message;
+    try {
+        message = JSON.parse(data.toString())
+    } catch (error) {
+        sendJson(socket, { type: "error", data: "Invalid message" })
+    }
+
+    if (message?.type === "subscribe" && Number.isInteger(message.matchId)) {
+        subscribe(message.matchId, socket)
+        socket.subscriptions.add(message.matchId)
+        sendJson(socket, { type: "subscribed", matchId: message.matchId })
+        return;
+    }
+    if (message.type === "unsubscribe" && Number.isInteger(message.matchId)) {
+        unsubscribe(message.matchId, socket)
+        socket.subscriptions.delete(message.matchId)
+        sendJson(socket, { type: "unsubscribed", matchId: message.matchId })
     }
 }
 export const attachWebSocketServer = (server) => {
-    const wss= new WebSocketServer({
-        server,
+    const wss = new WebSocketServer({
+        noServer: true,
         path: '/ws',
         maxPayload: 1024 * 1024, //this acts as security measure against memory abuse or flooding
     })
@@ -54,21 +112,6 @@ export const attachWebSocketServer = (server) => {
         });
     });
     wss.on('connection', async (socket, req) => {
-        if (wsArcjet) {
-            try {
-                const decision =  await wsArcjet.protect(req)
-                if (decision.isDenied()) {
-                    const code = decision.reason.isRateLimit() ? 1013 : 1008;
-                    const reason = decision.reason.isRateLimit() ? 'Rate Limit exceeded' : 'Access Denied';
-                    socket.close(code, reason);
-                    return;
-                }
-            } catch (error) {
-                console.error('WS connection error', error);
-                socket.close(1011, 'Server Security Error');
-                return;
-            }
-        }
         socket.isAlive = true;
         socket.on('pong', () => { socket.isAlive = true; });
 
@@ -97,11 +140,15 @@ export const attachWebSocketServer = (server) => {
 
             ws.isAlive = false;
             ws.ping();
-        })}, 30000);
+        })
+    }, 30000);
 
     wss.on('close', () => clearInterval(interval));
     const broadCastMatchCreated = (match) => {
-        broadCast(wss, { type: "match_created", data : match })
+        broadCastToAll(wss, { type: "match_created", data: match })
     }
-    return { broadCastMatchCreated }
+    const broadCastCommentary = (matchId, comment) => {
+        broadCastToMatch(matchId, { type: "commentary", data: comment })
+    }
+    return { broadCastMatchCreated, broadCastCommentary }
 }
